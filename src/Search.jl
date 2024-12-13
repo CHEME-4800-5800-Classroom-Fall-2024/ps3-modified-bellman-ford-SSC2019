@@ -117,6 +117,13 @@ end
 This function performs a single source shortest path calculation on a graph model using the Modified Bellman Ford algorithm.
 This version of Bellman-Ford should respect node capacities
 
+### Limitations
+- There's no mechanism to look ahead to see if this new path might block more optimal future assignments
+might block more optimal future assignments.
+
+Example scenario: 
+Path A→B→D might be chosen first, but later A→C→D might be better globally, yet switching to it could block other critical paths
+
 ### Arguments
 - `graph::T`: the graph model to search. This is a subtype of `MyAbstractGraphModel`.
 - `start::MyGraphNodeModel`: the node to start the search from.
@@ -128,17 +135,17 @@ This version of Bellman-Ford should respect node capacities
 function _search(graph::T, start::MyGraphNodeModel, algorithm::ModifiedBellmanFordAlgorithm) where T <: MyAbstractGraphModel
     
     # initialize -
-    distances = Dict{Int64, Float64}();
-    previous = Dict{Int64, Union{Nothing,Int64}}();
-    nodes = graph.nodes;
-    number_of_nodes = length(nodes);
+    distances = Dict{Int64, Float64}()
+    previous = Dict{Int64, Union{Nothing,Int64}}()
+    nodes = graph.nodes
+    number_of_nodes = length(nodes)
     
     # initialize distance and previous dictionaries correctly -
     for (_, node) ∈ nodes
-        distances[node.id] = Inf;
-        previous[node.id] = nothing;
+        distances[node.id] = Inf
+        previous[node.id] = nothing
     end
-    distances[start.id] = 0.0;  # Set start distance after initialization
+    distances[start.id] = 0.0  # Set start distance after initialization
 
     # initialize node assignment counters
     node_assignments = Dict{Int64, Tuple{Int64, Int64}}()
@@ -146,77 +153,69 @@ function _search(graph::T, start::MyGraphNodeModel, algorithm::ModifiedBellmanFo
         node_assignments[id] = (0, 0)  # (in_degree_usage, out_degree_usage)
     end
 
-    # main loop -
-    for _ in 1:(number_of_nodes - 1)
-        updated = false
+"""
+### Limitations
+- There's no mechanism to look ahead to see if this new path might block more optimal future assignments
+might block more optimal future assignments.
+
+Example scenario: 
+Path A→B→D might be chosen first, but later A→C→D might be better globally, yet switching to it could block other critical paths
+"""
+
+    # main loop - run for |V|-1 iterations
+    for i in 1:number_of_nodes
         
+        # Iterate through all edges
         for (k, _) ∈ graph.edges
             u = k[1]
             v = k[2]
             
-            if distances[u] != Inf
-                alt = distances[u] + weight(graph, u, v);
+            # Skip if source node is unreachable
+            if distances[u] == Inf
+                continue
+            end
+            
+            alt = distances[u] + weight(graph, u, v)
                 
-                # Get node capacities safely
-                u_node = graph.nodes[u]
-                v_node = graph.nodes[v]
-                u_capacity = u_node.capacity
-                v_capacity = v_node.capacity
+            # Get node capacities
+            u_node = graph.nodes[u]
+            v_node = graph.nodes[v]
+            u_capacity = u_node.capacity
+            v_capacity = v_node.capacity
+            
+            # Get current assignments
+            u_out_degree = node_assignments[u][2]
+            v_in_degree = node_assignments[v][1]
+            
+            # Check if the new path is shorter and respects capacity constraints
+            if alt < distances[v] && 
+               (u_capacity === nothing || u_out_degree < u_capacity[2]) &&
+               (v_capacity === nothing || v_in_degree < v_capacity[1])
                 
-                # Get current assignments
-                u_out_degree = node_assignments[u][2]
-                v_in_degree = node_assignments[v][1]
-                
-                # Check if the path is shorter and respects capacity constraints
-                if alt < distances[v] && 
-                   (u_capacity === nothing || u_out_degree < u_capacity[2]) &&
-                   (v_capacity === nothing || v_in_degree < v_capacity[1])
-                    
-                    # Remove old assignments if they exist
-                    if previous[v] !== nothing
-                        prev_u = previous[v]
-                        # Update old source node's out-degree
-                        old_out = node_assignments[prev_u][2] - 1
-                        old_in = node_assignments[prev_u][1]
-                        node_assignments[prev_u] = (old_in, old_out)
-                        
-                        # Update target node's in-degree
-                        old_in = node_assignments[v][1] - 1
-                        old_out = node_assignments[v][2]
-                        node_assignments[v] = (old_in, old_out)
-                    end
-                    
-                    # Update distance and previous
-                    distances[v] = alt
-                    previous[v] = u
-                    
-                    # Update new assignments
-                    new_in = node_assignments[u][1]
-                    new_out = node_assignments[u][2] + 1
-                    node_assignments[u] = (new_in, new_out)
-                    
-                    new_in = node_assignments[v][1] + 1
-                    new_out = node_assignments[v][2]
-                    node_assignments[v] = (new_in, new_out)
-                    
-                    updated = true
+                # Remove old assignments
+                if previous[v] !== nothing
+                    prev_u = previous[v]
+                    node_assignments[prev_u] = (node_assignments[prev_u][1],node_assignments[prev_u][2] - 1)
+                    node_assignments[v] = (node_assignments[v][1] - 1,node_assignments[v][2])
                 end
+                
+                # Update new assignments
+                distances[v] = alt
+                previous[v] = u
+                node_assignments[u] = (node_assignments[u][1],node_assignments[u][2] + 1)
+                node_assignments[v] = (node_assignments[v][1] + 1,node_assignments[v][2])
             end
         end
-
-        # Early termination for positive-weight graphs
-        if !updated
-            break
-        end
-    end
-
-    # Check for negative cycles while respecting capacity constraints
-    for (k, _) ∈ graph.edges
-        u = k[1]
-        v = k[2]
-        if distances[u] != Inf && 
-           distances[u] + weight(graph, u, v) < distances[v]
-            throw(ArgumentError("The graph contains a negative cycle"))
+        
+        # Check for negative cycles
+        if i == number_of_nodes
+            for (k, _) ∈ graph.edges
+                u = k[1]
+                v = k[2]
+                if distances[u] + weight(graph, u, v) < distances[v]
+                    throw(ArgumentError("The graph contains a negative cycle"))
+                end
+            end
         end
     end
 
